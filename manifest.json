@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "mahan.troubleshooter",
+  "name": "Troubleshooter",
+  "version": "1.0.0",
+  "author": "Mahan",
+  "description": "Log and fix recurring PC problems using the active coding agent.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Troubleshooter",
+    "description": "Log and fix recurring PC problems with your default agent.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
