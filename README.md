@@ -1,25 +1,43 @@
-# Omarchy Troubleshooter & Task Recipes
+# Omarchy Troubleshooter & Task Recipes (Agent Fixes & Shell Recipes)
 
-A plugin for Omarchy Linux that provides a centralized hub to log recurring PC issues, trigger auto-fixes via your AI agent, and run ordered shell command sequences (recipes).
+A powerful plugin for the Omarchy Linux status bar that works as a centralized hub to log recurring PC issues, trigger auto-fixes via your AI coding agent, and execute structured, multi-step shell command sequences (recipes).
 
-## Features
+## 🚀 Key Features
 
-- **Agent Fixes Tab**:
-  - Log recurring system issues with symptom descriptions, known solutions, and custom prompts.
-  - Automatically combine your context with system logs to run "Auto-Fixes" via your default configured Omarchy agent (e.g., OpenCode, Claude).
+### 󱚣 Agent Fixes & Issue Memory
+Log recurring system errors, configuration bugs, or glitches alongside their known fixes. Instead of trying to remember complex terminal commands or spending hours troubleshooting the same issue twice, instantly offload the task to your default system AI agent (e.g., OpenCode, Claude, Codex, Gemini).
 
-- **Shell Recipes Tab**:
-  - Save ordered multi-step shell command sequences.
-  - Interactive execution in an Omarchy terminal with step-by-step confirmation.
+- **One-Click Issue Auto-Fix:** Click "⚡ Fix with Agent" on a card to automatically combine the system issue context with prompt instructions and open an interactive session with your AI agent.
+- **Quick Fix / Instant Context:** Ask the agent to fix a newly encountered issue on the fly using Omarchy's native `omarchy agent prompt` launcher. The agent will inherit all the local troubleshooting context needed to trace the problem.
+- **Categorize & Tag:** Sort issues by hardware/software components (Audio, Display, Bluetooth, Pacman, etc.) and search across all logs.
 
-## Installation
+![Agent Fixes](assets/agent_fix.png)
+
+### 󰆍 Shell Task Recipes
+Store and repeatedly execute multi-step shell sequences in order. Perfect for maintenance scripts, resetting frozen services, system updates, and automated cleanup tasks.
+
+- **Step-By-Step Terminal Execution:** Review the exact shell commands in a dark preview box. Click "▶ Run in Terminal" to open a floating Omarchy presentation terminal.
+- **Controlled Auto-Run:** The terminal displays the recipe context and waits for user confirmation (pressing `[Enter]`) before executing steps sequentially.
+- **Visual Feedback:** Each command is clearly echoed with status styling, minimizing confusion and preventing terminal clutter. 
+
+![Shell Sequences](assets/shell_seq.png)
+
+## 🛠️ Installation
 
 1. Clone or download this repository.
-2. Link the plugin folder to your omarchy config:
-   `ln -s /path/to/omarchy-troubleshooter ~/.config/omarchy/plugins/mahan.troubleshooter`
-3. Restart the shell:
-   `omarchy restart shell`
+2. Symlink the plugin folder directly to your Omarchy user config:
+   ```bash
+   ln -s /path/to/omarchy-troubleshooter ~/.config/omarchy/plugins/mahan.troubleshooter
+   ```
+3. Restart your Omarchy shell so it registers the new plugin:
+   ```bash
+   omarchy restart shell
+   ```
 
-## Publishing
+*Note: The plugin securely saves issue memory locally at `~/.config/omarchy/troubleshooter-log.json` and recipes at `~/.config/omarchy/troubleshooter-sequences.json`.*
 
-This plugin follows Omarchy's plugin manifest schema and is ready for submission to the marketplace.
+## 📖 Publishing & Marketplace
+
+This plugin fully conforms to Omarchy's QuickShell-based `manifest.json` schema and exposes its primary overlay entrypoint via `Panel.qml`.
+
+> **License:** MIT License
