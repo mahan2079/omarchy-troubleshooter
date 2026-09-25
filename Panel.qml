@@ -12,7 +12,7 @@ Panel {
   ipcTarget: "mahan.troubleshooter"
   manageIpc: false
 
-  readonly property string helperCmd: "/home/mahan/.config/omarchy/plugins/mahan.troubleshooter/helper.py"
+  readonly property string helperCmd: Qt.resolvedUrl("helper.py").toString().replace(/^file:\/\//, "")
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: bar ? Color.accent : Color.accent
   readonly property color dim: Qt.darker(foreground, 1.55)

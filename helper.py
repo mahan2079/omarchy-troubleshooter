@@ -5,9 +5,23 @@ import json
 import argparse
 import subprocess
 import time
+import tempfile
+import stat
+import shutil
 
 DATA_FILE = os.path.expanduser("~/.config/omarchy/troubleshooter-log.json")
 SEQ_DATA_FILE = os.path.expanduser("~/.config/omarchy/troubleshooter-sequences.json")
+
+def get_secure_temp_dir():
+    # Prefer XDG_RUNTIME_DIR (/run/user/<uid>) which is a user-private tmpfs (mode 0700)
+    base_run = os.environ.get("XDG_RUNTIME_DIR")
+    if base_run and os.path.isdir(base_run):
+        secure_dir = os.path.join(base_run, "omarchy", "troubleshooter", "recipes")
+    else:
+        # Fallback to private user config cache
+        secure_dir = os.path.expanduser("~/.local/state/omarchy/troubleshooter/recipes")
+    os.makedirs(secure_dir, mode=0o700, exist_ok=True)
+    return secure_dir
 
 DEFAULT_ISSUES = [
     {
@@ -87,8 +101,7 @@ DEFAULT_SEQUENCES = [
 def load_data():
     if not os.path.exists(DATA_FILE):
         os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_ISSUES, f, indent=2)
+        save_data(DEFAULT_ISSUES)
         return DEFAULT_ISSUES
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -97,15 +110,19 @@ def load_data():
         return DEFAULT_ISSUES
 
 def save_data(data):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    parent_dir = os.path.dirname(DATA_FILE)
+    os.makedirs(parent_dir, exist_ok=True)
+    # Atomic write to avoid partial/corrupted writes
+    fd, tmp_path = tempfile.mkstemp(prefix="issues-", suffix=".json.tmp", dir=parent_dir)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, DATA_FILE)
 
 def load_seq_data():
     if not os.path.exists(SEQ_DATA_FILE):
         os.makedirs(os.path.dirname(SEQ_DATA_FILE), exist_ok=True)
-        with open(SEQ_DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_SEQUENCES, f, indent=2)
+        save_seq_data(DEFAULT_SEQUENCES)
         return DEFAULT_SEQUENCES
     try:
         with open(SEQ_DATA_FILE, "r", encoding="utf-8") as f:
@@ -114,9 +131,14 @@ def load_seq_data():
         return DEFAULT_SEQUENCES
 
 def save_seq_data(data):
-    os.makedirs(os.path.dirname(SEQ_DATA_FILE), exist_ok=True)
-    with open(SEQ_DATA_FILE, "w", encoding="utf-8") as f:
+    parent_dir = os.path.dirname(SEQ_DATA_FILE)
+    os.makedirs(parent_dir, exist_ok=True)
+    # Atomic write
+    fd, tmp_path = tempfile.mkstemp(prefix="seqs-", suffix=".json.tmp", dir=parent_dir)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, SEQ_DATA_FILE)
 
 def run_agent_prompt(prompt_text):
     cmd = ["omarchy-launch-terminal", "opencode", "--prompt", prompt_text]
@@ -237,11 +259,16 @@ def cmd_run_seq(args):
     category = target.get("category", "General")
     tags = ", ".join(target.get("tags", []))
 
-    script_path = f"/tmp/omarchy_recipe_{args.id}.sh"
+    # Secure exclusive temporary script creation in private directory
+    secure_dir = get_secure_temp_dir()
+    script_fd, script_path = tempfile.mkstemp(prefix="omarchy-recipe-", suffix=".sh", dir=secure_dir, text=True)
+    
     cmd_lines = [l.strip() for l in cmds.split("\n") if l.strip()]
 
-    with open(script_path, "w", encoding="utf-8") as f:
+    with os.fdopen(script_fd, 'w', encoding='utf-8') as f:
         f.write("#!/bin/bash\n")
+        f.write("set -euo pipefail\n")
+        f.write("trap 'rm -f \"$0\"' EXIT\n")
         f.write("clear\n")
         f.write("echo -e '\\033[1;36m=====================================================\\033[0m'\n")
         f.write(f"echo -e '\\033[1;36m  SHELL RECIPE: {title}\\033[0m'\n")
@@ -271,14 +298,14 @@ def cmd_run_seq(args):
         f.write("echo -e '\\033[1;32m=====================================================\\033[0m'\n")
         f.write("echo -e '\\033[0;37mPress [ENTER] to close terminal...\\033[0m'\n")
         f.write("read -r\n")
-
-    os.chmod(script_path, 0o755)
+    
+    os.chmod(script_path, 0o700) # Ensure it is only accessible and executable by the owner
 
     cmd = ["omarchy-launch-terminal", "bash", script_path]
     try:
         subprocess.Popen(cmd, start_new_session=True)
         print(json.dumps({"success": True}))
-    except Exception as e:
+    except Exception:
         subprocess.Popen(["xdg-terminal-exec", "bash", script_path], start_new_session=True)
         print(json.dumps({"success": True}))
 
