@@ -329,7 +329,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "\uf0ad"
-    tooltipText: "Agent Fixes & Shell Recipes"
+    tooltipText: "Troubleshooter: Agent Fixes & Shell Recipes"
     active: root.opened
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton) root.refreshList()
@@ -374,7 +374,7 @@ Panel {
           // ---------- Hero ----------
           PanelHero {
             width: parent.width
-            title: "Agent Fixes & Shell Recipes"
+            title: "Troubleshooter"
             meta: root.activeTab === 0 ? ("Agent: " + root.activeAgentName) : "Managed Shell Tasks"
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -685,13 +685,14 @@ Panel {
                 required property var modelData
                 required property int index
 
+                property bool isExpanded: false
+                property string customNoteText: ""
+
                 width: mainColumn.width
                 implicitHeight: cardContentCol.implicitHeight + Style.space(20)
                 color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
                 radius: Style.cornerRadius
                 borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
-
-                property string customNoteText: ""
 
                 Column {
                   id: cardContentCol
@@ -729,7 +730,7 @@ Panel {
                       anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
 
-                    Text {
+                      Text {
                         id: catText
                         anchors.centerIn: parent
                         text: issueCard.modelData ? (issueCard.modelData.category || "General") : ""
@@ -750,7 +751,7 @@ Panel {
                     font.pixelSize: Style.font.caption
                   }
 
-                  // Description
+                  // Description (Truncated unless expanded)
                   Text {
                     visible: issueCard.modelData && !!issueCard.modelData.description
                     text: issueCard.modelData ? (issueCard.modelData.description || "") : ""
@@ -759,9 +760,11 @@ Panel {
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
                     width: parent.width
+                    maximumLineCount: issueCard.isExpanded ? 100 : 2
+                    elide: Text.ElideRight
                   }
 
-                  // Solution Preview
+                  // Solution Preview (Truncated unless expanded)
                   Text {
                     visible: issueCard.modelData && !!issueCard.modelData.solution
                     text: issueCard.modelData ? ("💡 " + (issueCard.modelData.solution || "")) : ""
@@ -770,10 +773,28 @@ Panel {
                     font.pixelSize: Style.font.caption
                     wrapMode: Text.WordWrap
                     width: parent.width
+                    maximumLineCount: issueCard.isExpanded ? 100 : 1
+                    elide: Text.ElideRight
                   }
 
-                  // Optional extra note input for this launch
+                  // Show More / Show Less Toggle
+                  Text {
+                    text: issueCard.isExpanded ? "▲ Show less" : "▼ Show more & details"
+                    color: root.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: issueCard.isExpanded = !issueCard.isExpanded
+                    }
+                  }
+
+                  // Optional extra note input for this launch (shown when expanded)
                   TextField {
+                    visible: issueCard.isExpanded
                     width: parent.width
                     placeholderText: "Extra note / symptom for this run (optional)..."
                     font.pixelSize: Style.font.caption
@@ -995,6 +1016,8 @@ Panel {
                 required property var modelData
                 required property int index
 
+                property bool isExpanded: false
+
                 width: mainColumn.width
                 implicitHeight: seqContentCol.implicitHeight + Style.space(20)
                 color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
@@ -1067,10 +1090,28 @@ Panel {
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
                     width: parent.width
+                    maximumLineCount: seqCard.isExpanded ? 100 : 2
+                    elide: Text.ElideRight
                   }
 
-                  // Commands Code Preview Box
+                  // Show More / Show Less Toggle
+                  Text {
+                    text: seqCard.isExpanded ? "▲ Hide commands preview" : "▼ Show commands (" + ((seqCard.modelData && seqCard.modelData.commands) ? seqCard.modelData.commands.split("\n").length : 0) + " steps)"
+                    color: root.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: seqCard.isExpanded = !seqCard.isExpanded
+                    }
+                  }
+
+                  // Commands Code Preview Box (visible when expanded)
                   BorderSurface {
+                    visible: seqCard.isExpanded
                     width: parent.width
                     implicitHeight: cmdPreviewCol.implicitHeight + Style.space(12)
                     color: Qt.rgba(0, 0, 0, 0.35)
