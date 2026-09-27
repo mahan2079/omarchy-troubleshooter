@@ -255,9 +255,9 @@ def cmd_run_seq(args):
         return
 
     cmds = target.get("commands", "")
-    title = target.get("title", "Shell Recipe")
-    category = target.get("category", "General")
-    tags = ", ".join(target.get("tags", []))
+    title_safe = target.get("title", "Shell Recipe").replace("'", "'\\''")
+    category_safe = target.get("category", "General").replace("'", "'\\''")
+    tags_safe = ", ".join(target.get("tags", [])).replace("'", "'\\''")
 
     # Secure exclusive temporary script creation in private directory
     secure_dir = get_secure_temp_dir()
@@ -271,8 +271,8 @@ def cmd_run_seq(args):
         f.write("trap 'rm -f \"$0\"' EXIT\n")
         f.write("clear\n")
         f.write("echo -e '\\033[1;36m=====================================================\\033[0m'\n")
-        f.write(f"echo -e '\\033[1;36m  SHELL RECIPE: {title}\\033[0m'\n")
-        f.write(f"echo -e '\\033[0;34m  Category: {category}  |  Tags: {tags}\\033[0m'\n")
+        f.write(f"echo -e '\\033[1;36m  SHELL RECIPE: {title_safe}\\033[0m'\n")
+        f.write(f"echo -e '\\033[0;34m  Category: {category_safe}  |  Tags: {tags_safe}\\033[0m'\n")
         f.write("echo -e '\\033[1;36m=====================================================\\033[0m'\n\n")
         f.write("echo -e '\\033[1;37mCommands to execute:\\033[0m'\n")
         
