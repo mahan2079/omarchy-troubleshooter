@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-import sys
 import os
 import json
 import argparse
 import subprocess
 import time
 import tempfile
-import stat
-import shutil
 import secrets
 
 DATA_FILE = os.path.expanduser("~/.config/omarchy/troubleshooter-log.json")
@@ -153,6 +150,10 @@ def run_agent_prompt(prompt_text):
         except Exception:
             return False
 
+def _unique_id(prefix):
+    # time + cryptographic randomness: no collisions even on rapid successive adds
+    return f"{prefix}-{int(time.time())}-{secrets.token_hex(4)}"
+
 def cmd_list(args):
     data = load_data()
     print(json.dumps(data))
@@ -160,7 +161,7 @@ def cmd_list(args):
 def cmd_add(args):
     data = load_data()
     item = {
-        "id": f"issue-{int(time.time())}",
+        "id": _unique_id("issue"),
         "title": args.title,
         "category": args.category or "General",
         "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
@@ -188,13 +189,39 @@ def cmd_launch(args):
     run_agent_prompt(full_prompt)
     print(json.dumps({"success": True}))
 
+def cmd_launch_custom(args):
+    # Quick-report path used by the panel's fast issue box. All user input travels
+    # exclusively through subprocess argv (never a shell string), so metacharacters
+    # in --issue/--category/--tags are inert data.
+    full_prompt = (
+        "[USER PC ISSUE REPORT]\nCategory: " + (args.category or "General") + "\n"
+        "Tags: " + (args.tags or "") + "\nIssue: " + args.issue + "\n\n"
+        "Please diagnose the cause on this Omarchy Arch Linux system, "
+        "check relevant logs and configs, and fix it properly."
+    )
+    if args.save:
+        data = load_data()
+        item = {
+            "id": _unique_id("issue"),
+            "title": args.issue[:50],
+            "category": args.category or "General",
+            "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
+            "description": args.issue,
+            "solution": "",
+            "prompt": full_prompt
+        }
+        data.insert(0, item)
+        save_data(data)
+    run_agent_prompt(full_prompt)
+    print(json.dumps({"success": True}))
+
 def cmd_list_seq(args):
     print(json.dumps(load_seq_data()))
 
 def cmd_add_seq(args):
     data = load_seq_data()
     item = {
-        "id": f"seq-{int(time.time())}",
+        "id": _unique_id("seq"),
         "title": args.title,
         "category": args.category or "General",
         "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
@@ -220,7 +247,19 @@ def cmd_run_seq(args):
 
     secure_dir = get_secure_temp_dir()
     script_fd, script_path = tempfile.mkstemp(prefix="omarchy-recipe-", suffix=".sh", dir=secure_dir, text=True)
+
+    # Heredoc delimiters are cryptographic nonces AND verified absent from every
+    # user-controlled byte below, so even a deliberately crafted title/commands
+    # payload containing "HEADER_<guess>" can never terminate a heredoc early.
+    blob = "\n".join([
+        str(target.get("title", "")),
+        str(target.get("category", "")),
+        ",".join(target.get("tags", []) or []),
+        str(target.get("commands", "")),
+    ])
     token = secrets.token_hex(16)
+    while ("HEADER_" + token) in blob:
+        token = secrets.token_hex(16)
     
     cmd_lines = [l.strip() for l in target.get("commands", "").split("\n") if l.strip()]
 
@@ -245,6 +284,8 @@ def cmd_run_seq(args):
                 f.write(f"{line}\n")
                 continue
             step_token = secrets.token_hex(16)
+            while ("STEP_" + step_token) in line:
+                step_token = secrets.token_hex(16)
             f.write(f"echo -e '\\n\\033[1;35m>> [{idx}/{len(cmd_lines)}] Running:\\033[0m'\n")
             f.write(f"cat <<'STEP_{step_token}'\n$ {line}\nSTEP_{step_token}\n")
             f.write(f"{line}\n")
@@ -269,6 +310,8 @@ def main():
     p_add.add_argument("--title", required=True); p_add.add_argument("--category"); p_add.add_argument("--tags"); p_add.add_argument("--description"); p_add.add_argument("--solution"); p_add.add_argument("--prompt")
     p_del = subparsers.add_parser("delete"); p_del.add_argument("--id", required=True)
     p_launch = subparsers.add_parser("launch"); p_launch.add_argument("--id", required=True); p_launch.add_argument("--custom-note")
+    p_custom = subparsers.add_parser("launch-custom")
+    p_custom.add_argument("--issue", required=True); p_custom.add_argument("--category", default="General"); p_custom.add_argument("--tags", default=""); p_custom.add_argument("--save", action="store_true")
     
     subparsers.add_parser("list-seq")
     p_add_seq = subparsers.add_parser("add-seq")
@@ -277,7 +320,7 @@ def main():
     p_run_seq = subparsers.add_parser("run-seq"); p_run_seq.add_argument("--id", required=True)
 
     args = parser.parse_args()
-    cmds = {"list": cmd_list, "add": cmd_add, "delete": cmd_delete, "launch": cmd_launch, "list-seq": cmd_list_seq, "add-seq": cmd_add_seq, "delete-seq": cmd_del_seq, "run-seq": cmd_run_seq}
+    cmds = {"list": cmd_list, "add": cmd_add, "delete": cmd_delete, "launch": cmd_launch, "launch-custom": cmd_launch_custom, "list-seq": cmd_list_seq, "add-seq": cmd_add_seq, "delete-seq": cmd_del_seq, "run-seq": cmd_run_seq}
     (cmds.get(args.subcommand, cmd_list))(args)
 
 if __name__ == "__main__":
