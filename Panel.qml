@@ -453,6 +453,7 @@ Panel {
                 }
 
                 Text {
+                textFormat: Text.PlainText
                   text: "Describe problem to combine with system context and prompt agent:"
                   color: root.dim
                   font.family: root.fontFamily
@@ -512,6 +513,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Title / Error Name:"
                 color: root.dim
                 font.family: root.fontFamily
@@ -531,7 +533,7 @@ Panel {
                 Column {
                   width: (parent.width - Style.space(8)) / 2
                   spacing: Style.space(4)
-                  Text { text: "Category:"; color: root.dim; font.pixelSize: Style.font.caption }
+                  Text { textFormat: Text.PlainText; text: "Category:"; color: root.dim; font.pixelSize: Style.font.caption }
                   TextField {
                     width: parent.width
                     placeholderText: "Audio / Display / Network..."
@@ -543,7 +545,7 @@ Panel {
                 Column {
                   width: (parent.width - Style.space(8)) / 2
                   spacing: Style.space(4)
-                  Text { text: "Tags (comma separated):"; color: root.dim; font.pixelSize: Style.font.caption }
+                  Text { textFormat: Text.PlainText; text: "Tags (comma separated):"; color: root.dim; font.pixelSize: Style.font.caption }
                   TextField {
                     width: parent.width
                     placeholderText: "wifi, network, sleep"
@@ -554,6 +556,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Symptom / Description:"
                 color: root.dim
                 font.family: root.fontFamily
@@ -567,6 +570,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Known Fix / Steps to resolve:"
                 color: root.dim
                 font.family: root.fontFamily
@@ -580,6 +584,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Prompt Instructions for Agent (optional):"
                 color: root.dim
                 font.family: root.fontFamily
@@ -666,6 +671,7 @@ Panel {
             }
 
             Text {
+            textFormat: Text.PlainText
               visible: root.filteredIssues.length === 0
               text: "No issues match your filter.\nClick '+ Log Issue' above to add one."
               color: root.dim
@@ -708,6 +714,7 @@ Panel {
                     implicitHeight: Math.max(cardTitle.implicitHeight, catBadge.implicitHeight)
 
                     Text {
+                    textFormat: Text.PlainText
                       id: cardTitle
                       text: issueCard.modelData ? (issueCard.modelData.title || "Untitled") : ""
                       color: root.foreground
@@ -731,6 +738,7 @@ Panel {
                       anchors.verticalCenter: parent.verticalCenter
 
                       Text {
+                      textFormat: Text.PlainText
                         id: catText
                         anchors.centerIn: parent
                         text: issueCard.modelData ? (issueCard.modelData.category || "General") : ""
@@ -744,6 +752,7 @@ Panel {
 
                   // Tags
                   Text {
+                  textFormat: Text.PlainText
                     visible: issueCard.modelData && Array.isArray(issueCard.modelData.tags) && issueCard.modelData.tags.length > 0
                     text: issueCard.modelData && Array.isArray(issueCard.modelData.tags) ? issueCard.modelData.tags.map(function(t) { return "#" + t }).join(" ") : ""
                     color: root.accent
@@ -753,6 +762,7 @@ Panel {
 
                   // Description (Truncated unless expanded)
                   Text {
+                  textFormat: Text.PlainText
                     visible: issueCard.modelData && !!issueCard.modelData.description
                     text: issueCard.modelData ? (issueCard.modelData.description || "") : ""
                     color: root.dim
@@ -766,6 +776,7 @@ Panel {
 
                   // Solution Preview (Truncated unless expanded)
                   Text {
+                  textFormat: Text.PlainText
                     visible: issueCard.modelData && !!issueCard.modelData.solution
                     text: issueCard.modelData ? ("💡 " + (issueCard.modelData.solution || "")) : ""
                     color: root.foreground
@@ -779,6 +790,7 @@ Panel {
 
                   // Show More / Show Less Toggle
                   Text {
+                  textFormat: Text.PlainText
                     text: issueCard.isExpanded ? "▲ Show less" : "▼ Show more & details"
                     color: root.accent
                     font.family: root.fontFamily
@@ -856,6 +868,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Task Title / Name:"
                 color: root.dim
                 font.family: root.fontFamily
@@ -875,7 +888,7 @@ Panel {
                 Column {
                   width: (parent.width - Style.space(8)) / 2
                   spacing: Style.space(4)
-                  Text { text: "Category:"; color: root.dim; font.pixelSize: Style.font.caption }
+                  Text { textFormat: Text.PlainText; text: "Category:"; color: root.dim; font.pixelSize: Style.font.caption }
                   TextField {
                     width: parent.width
                     placeholderText: "Audio / Bluetooth / Network..."
@@ -887,7 +900,7 @@ Panel {
                 Column {
                   width: (parent.width - Style.space(8)) / 2
                   spacing: Style.space(4)
-                  Text { text: "Tags (comma separated):"; color: root.dim; font.pixelSize: Style.font.caption }
+                  Text { textFormat: Text.PlainText; text: "Tags (comma separated):"; color: root.dim; font.pixelSize: Style.font.caption }
                   TextField {
                     width: parent.width
                     placeholderText: "pipewire, reset"
@@ -898,6 +911,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Description / Purpose:"
                 color: root.dim
                 font.family: root.fontFamily
@@ -911,6 +925,7 @@ Panel {
               }
 
               Text {
+              textFormat: Text.PlainText
                 text: "Commands to Run (in order, one per line):"
                 color: root.dim
                 font.family: root.fontFamily
@@ -997,6 +1012,7 @@ Panel {
             }
 
             Text {
+            textFormat: Text.PlainText
               visible: root.filteredSequences.length === 0
               text: "No recipes match your filter.\nClick '+ Add Recipe' above to create one."
               color: root.dim
@@ -1038,6 +1054,7 @@ Panel {
                     implicitHeight: Math.max(seqTitle.implicitHeight, seqCatBadge.implicitHeight)
 
                     Text {
+                    textFormat: Text.PlainText
                       id: seqTitle
                       text: seqCard.modelData ? (seqCard.modelData.title || "Untitled Sequence") : ""
                       color: root.foreground
@@ -1061,6 +1078,7 @@ Panel {
                       anchors.verticalCenter: parent.verticalCenter
 
                       Text {
+                      textFormat: Text.PlainText
                         id: seqCatText
                         anchors.centerIn: parent
                         text: seqCard.modelData ? (seqCard.modelData.category || "General") : ""
@@ -1074,6 +1092,7 @@ Panel {
 
                   // Tags
                   Text {
+                  textFormat: Text.PlainText
                     visible: seqCard.modelData && Array.isArray(seqCard.modelData.tags) && seqCard.modelData.tags.length > 0
                     text: seqCard.modelData && Array.isArray(seqCard.modelData.tags) ? seqCard.modelData.tags.map(function(t) { return "#" + t }).join(" ") : ""
                     color: root.accent
@@ -1083,6 +1102,7 @@ Panel {
 
                   // Description
                   Text {
+                  textFormat: Text.PlainText
                     visible: seqCard.modelData && !!seqCard.modelData.description
                     text: seqCard.modelData ? (seqCard.modelData.description || "") : ""
                     color: root.dim
@@ -1096,6 +1116,7 @@ Panel {
 
                   // Show More / Show Less Toggle
                   Text {
+                  textFormat: Text.PlainText
                     text: seqCard.isExpanded ? "▲ Hide commands preview" : "▼ Show commands (" + ((seqCard.modelData && seqCard.modelData.commands) ? seqCard.modelData.commands.split("\n").length : 0) + " steps)"
                     color: root.accent
                     font.family: root.fontFamily
@@ -1129,6 +1150,7 @@ Panel {
                       Repeater {
                         model: seqCard.modelData && seqCard.modelData.commands ? seqCard.modelData.commands.split("\n") : []
                         Text {
+                        textFormat: Text.PlainText
                           required property string modelData
                           required property int index
                           text: "$ " + (index + 1) + ".  " + modelData
