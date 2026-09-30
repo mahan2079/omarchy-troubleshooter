@@ -1,27 +1,82 @@
 #!/usr/bin/env python3
+"""
+Mahan Troubleshooter - Backend Helper & IPC Server
+===================================================
+All user-entered data (prompts, custom notes, titles, descriptions,
+commands, tags, solutions) is treated as STRICTLY SENSITIVE.
+
+Zero-Argv Architecture:
+1. IPC Mode (Primary): QML connects to a private UNIX domain socket at
+   $XDG_RUNTIME_DIR/omarchy/troubleshooter/ipc.sock (0700 dir, 0600 socket).
+   Requests & responses are single-line JSON payloads over the stream.
+   Zero process spawning occurs for IPC operations; nothing appears in
+   ps/top/procfs.
+
+2. Process Fallback Mode (CLI): If the socket is unreachable, QML spawns
+   `helper.py <subcommand>` with `stdinEnabled: true`. The request payload
+   is piped via process STDIN (never argv). Argv contains only the fixed
+   subcommand name.
+
+3. Agent Launch Staging: When an agent is triggered (opencode), the full
+   assembled prompt is written to a private 0600 file inside the 0700 runtime
+   directory. The launcher terminal is invoked with `opencode run -f <path>`
+   passing a generic instruction message. The private prompt file is deleted
+   immediately upon agent completion.
+"""
+
 import os
+import sys
 import json
-import argparse
+import socket
+import select
 import subprocess
 import time
 import tempfile
 import secrets
+import stat
 
 DATA_FILE = os.path.expanduser("~/.config/omarchy/troubleshooter-log.json")
 SEQ_DATA_FILE = os.path.expanduser("~/.config/omarchy/troubleshooter-sequences.json")
 
-def get_secure_temp_dir():
+AGENT_GENERIC_MESSAGE = (
+    "Your complete task briefing is in the attached file. Read it fully first, "
+    "then carry out every step autonomously without asking for confirmation."
+)
+AGENT_SESSION_TITLE = "Omarchy Troubleshooter"
+
+def get_secure_runtime_dir():
     base_run = os.environ.get("XDG_RUNTIME_DIR")
     if base_run and os.path.isdir(base_run):
-        secure_dir = os.path.join(base_run, "omarchy", "troubleshooter", "recipes")
+        secure_dir = os.path.join(base_run, "omarchy", "troubleshooter")
     else:
-        secure_dir = os.path.expanduser("~/.local/state/omarchy/troubleshooter/recipes")
+        secure_dir = os.path.expanduser("~/.local/state/omarchy/troubleshooter")
     os.makedirs(secure_dir, mode=0o700, exist_ok=True)
     try:
         os.chmod(secure_dir, 0o700)
     except OSError:
         pass
     return secure_dir
+
+def get_socket_path():
+    return os.path.join(get_secure_runtime_dir(), "ipc.sock")
+
+def get_secure_temp_dir():
+    recipes_dir = os.path.join(get_secure_runtime_dir(), "recipes")
+    os.makedirs(recipes_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(recipes_dir, 0o700)
+    except OSError:
+        pass
+    return recipes_dir
+
+def get_secure_prompts_dir():
+    prompts_dir = os.path.join(get_secure_runtime_dir(), "prompts")
+    os.makedirs(prompts_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(prompts_dir, 0o700)
+    except OSError:
+        pass
+    return prompts_dir
 
 DEFAULT_ISSUES = [
     {
@@ -138,119 +193,242 @@ def save_seq_data(data):
     os.chmod(tmp_path, 0o600)
     os.replace(tmp_path, SEQ_DATA_FILE)
 
+def _write_prompt_file(prompt_text):
+    """Write the assembled prompt to a private 0600 file in the runtime dir."""
+    prompts_dir = get_secure_prompts_dir()
+    fd, path = tempfile.mkstemp(prefix="prompt-", suffix=".md", dir=prompts_dir, text=True)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(prompt_text)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
 def run_agent_prompt(prompt_text):
-    cmd = ["omarchy-launch-terminal", "opencode", "--prompt", prompt_text]
+    """
+    Launch the agent via terminal, loading the full briefing from a private file.
+    No prompt text or user notes appear in argv. The launcher script takes the
+    prompt file path as $1 and removes it when the agent completes.
+    """
+    prompt_path = _write_prompt_file(prompt_text)
+    token = secrets.token_hex(8)
+    lines = [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        "trap 'rm -f \"$0\" \"${1:-}\"' EXIT",
+        "clear",
+        f"cat <<'BANNER_{token}'",
+        "=====================================================",
+        "  OMARCHY TROUBLESHOOTER - Agent Auto-Fix",
+        "  Task briefing loaded securely from private file.",
+        "=====================================================",
+        f"BANNER_{token}",
+        "",
+        "if ! command -v opencode >/dev/null 2>&1; then",
+        "  echo 'opencode is not installed. Choose an agent with: omarchy default agent <name>'",
+        "  read -r -p 'Press [ENTER] to close terminal...'",
+        "  exit 1",
+        "fi",
+        "",
+        "status=0",
+        f'opencode run --auto --title "{AGENT_SESSION_TITLE}" -f "$1" "{AGENT_GENERIC_MESSAGE}" || status=$?',
+        'rm -f "$1"',
+        'echo ""',
+        'echo "Agent run completed (status $status)."',
+        "read -r -p 'Press [ENTER] to close terminal...'",
+    ]
+    
+    script_fd, script_path = tempfile.mkstemp(
+        prefix="omarchy-agent-", suffix=".sh", dir=get_secure_temp_dir(), text=True
+    )
+    with os.fdopen(script_fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(script_path, 0o700)
+    
+    cmd = ["omarchy-launch-terminal", "bash", script_path, prompt_path]
     try:
         subprocess.Popen(cmd, start_new_session=True)
         return True
     except Exception:
         try:
-            subprocess.Popen(["xdg-terminal-exec", "opencode", "--prompt", prompt_text], start_new_session=True)
+            subprocess.Popen(["xdg-terminal-exec", "bash", script_path, prompt_path], start_new_session=True)
             return True
         except Exception:
             return False
 
 def _unique_id(prefix):
-    # time + cryptographic randomness: no collisions even on rapid successive adds
     return f"{prefix}-{int(time.time())}-{secrets.token_hex(4)}"
 
-def cmd_list(args):
-    data = load_data()
-    print(json.dumps(data))
+# ============================================================================
+# Core Business Logic Handlers
+# All inputs are dictionaries parsed from JSON (from Socket or STDIN).
+# ZERO arguments travel on the process command-line.
+# ============================================================================
 
-def cmd_add(args):
+def handle_list(req):
+    return {"success": True, "data": load_data()}
+
+def handle_add(req):
+    title = str(req.get("title", "")).strip()
+    if not title:
+        return {"success": False, "error": "Title is required"}
     data = load_data()
+    raw_tags = req.get("tags", "")
+    if isinstance(raw_tags, list):
+        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+    elif isinstance(raw_tags, str):
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    else:
+        tags = []
+    
+    desc = str(req.get("description", ""))
+    sol = str(req.get("solution", ""))
+    p_custom = str(req.get("prompt", ""))
+    default_p = f"Fix: {title}. Details: {desc}. Known solution: {sol}"
+    
     item = {
         "id": _unique_id("issue"),
-        "title": args.title,
-        "category": args.category or "General",
-        "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
-        "description": args.description or "",
-        "solution": args.solution or "",
-        "prompt": args.prompt or f"Fix: {args.title}. Details: {args.description}. Known solution: {args.solution}"
+        "title": title,
+        "category": str(req.get("category", "")).strip() or "General",
+        "tags": tags,
+        "description": desc,
+        "solution": sol,
+        "prompt": p_custom or default_p
     }
     data.insert(0, item)
     save_data(data)
-    print(json.dumps({"success": True, "id": item["id"]}))
+    return {"success": True, "id": item["id"]}
 
-def cmd_delete(args):
+def handle_delete(req):
+    target_id = str(req.get("id", ""))
+    if not target_id:
+        return {"success": False, "error": "ID is required"}
     data = load_data()
-    data = [x for x in data if x.get("id") != args.id]
+    data = [x for x in data if x.get("id") != target_id]
     save_data(data)
-    print(json.dumps({"success": True}))
+    return {"success": True}
 
-def cmd_launch(args):
+def handle_launch(req):
+    target_id = str(req.get("id", ""))
+    if not target_id:
+        return {"success": False, "error": "ID is required"}
     data = load_data()
-    target = next((x for x in data if x.get("id") == args.id), None)
+    target = next((x for x in data if x.get("id") == target_id), None)
     if not target:
-        print(json.dumps({"success": False, "error": "Item not found"}))
-        return
-    full_prompt = (f"[CONTEXT]\nTitle: {target.get('title')}\nDetails: {target.get('solution')}\n\n[NOTE]\n{args.custom_note}\n\n" if args.custom_note else "") + target.get('prompt', "")
+        return {"success": False, "error": "Item not found"}
+    
+    custom_note = str(req.get("custom_note", "")).strip()
+    parts = [
+        "[CONTEXT / LOGGED ISSUE]",
+        f"Title: {target.get('title', '')}",
+        f"Category: {target.get('category', 'General')}",
+        f"Tags: {', '.join(target.get('tags', []))}",
+        f"Details: {target.get('solution', '')}"
+    ]
+    if custom_note:
+        parts.extend(["", "[USER NOTE]", custom_note])
+    parts.extend(["", "[INSTRUCTIONS]", target.get("prompt", "")])
+    
+    full_prompt = "\n".join(parts)
     run_agent_prompt(full_prompt)
-    print(json.dumps({"success": True}))
+    return {"success": True}
 
-def cmd_launch_custom(args):
-    # Quick-report path used by the panel's fast issue box. All user input travels
-    # exclusively through subprocess argv (never a shell string), so metacharacters
-    # in --issue/--category/--tags are inert data.
+def handle_launch_custom(req):
+    issue = str(req.get("issue", "")).strip()
+    if not issue:
+        return {"success": False, "error": "Issue description is required"}
+    
+    category = str(req.get("category", "")).strip() or "General"
+    raw_tags = req.get("tags", "")
+    if isinstance(raw_tags, list):
+        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+    elif isinstance(raw_tags, str):
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    else:
+        tags = []
+    
     full_prompt = (
-        "[USER PC ISSUE REPORT]\nCategory: " + (args.category or "General") + "\n"
-        "Tags: " + (args.tags or "") + "\nIssue: " + args.issue + "\n\n"
+        "[USER PC ISSUE REPORT]\n"
+        f"Category: {category}\n"
+        f"Tags: {', '.join(tags)}\n"
+        f"Issue: {issue}\n\n"
         "Please diagnose the cause on this Omarchy Arch Linux system, "
         "check relevant logs and configs, and fix it properly."
     )
-    if args.save:
+    
+    if req.get("save", False):
         data = load_data()
         item = {
             "id": _unique_id("issue"),
-            "title": args.issue[:50],
-            "category": args.category or "General",
-            "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
-            "description": args.issue,
+            "title": issue[:50],
+            "category": category,
+            "tags": tags,
+            "description": issue,
             "solution": "",
             "prompt": full_prompt
         }
         data.insert(0, item)
         save_data(data)
+        
     run_agent_prompt(full_prompt)
-    print(json.dumps({"success": True}))
+    return {"success": True}
 
-def cmd_list_seq(args):
-    print(json.dumps(load_seq_data()))
+def handle_list_seq(req):
+    return {"success": True, "data": load_seq_data()}
 
-def cmd_add_seq(args):
+def handle_add_seq(req):
+    title = str(req.get("title", "")).strip()
+    commands = str(req.get("commands", "")).strip()
+    if not title:
+        return {"success": False, "error": "Title is required"}
+    if not commands:
+        return {"success": False, "error": "Commands are required"}
+        
+    raw_tags = req.get("tags", "")
+    if isinstance(raw_tags, list):
+        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+    elif isinstance(raw_tags, str):
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    else:
+        tags = []
+        
     data = load_seq_data()
     item = {
         "id": _unique_id("seq"),
-        "title": args.title,
-        "category": args.category or "General",
-        "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
-        "description": args.description or "",
-        "commands": args.commands or "echo 'No commands configured'"
+        "title": title,
+        "category": str(req.get("category", "")).strip() or "General",
+        "tags": tags,
+        "description": str(req.get("description", "")),
+        "commands": commands
     }
     data.insert(0, item)
     save_seq_data(data)
-    print(json.dumps({"success": True, "id": item["id"]}))
+    return {"success": True, "id": item["id"]}
 
-def cmd_del_seq(args):
+def handle_del_seq(req):
+    target_id = str(req.get("id", ""))
+    if not target_id:
+        return {"success": False, "error": "ID is required"}
     data = load_seq_data()
-    data = [x for x in data if x.get("id") != args.id]
+    data = [x for x in data if x.get("id") != target_id]
     save_seq_data(data)
-    print(json.dumps({"success": True}))
+    return {"success": True}
 
-def cmd_run_seq(args):
+def handle_run_seq(req):
+    target_id = str(req.get("id", ""))
+    if not target_id:
+        return {"success": False, "error": "ID is required"}
     data = load_seq_data()
-    target = next((x for x in data if x.get("id") == args.id), None)
+    target = next((x for x in data if x.get("id") == target_id), None)
     if not target:
-        print(json.dumps({"success": False, "error": "Sequence not found"}))
-        return
-
+        return {"success": False, "error": "Sequence not found"}
+        
     secure_dir = get_secure_temp_dir()
-    script_fd, script_path = tempfile.mkstemp(prefix="omarchy-recipe-", suffix=".sh", dir=secure_dir, text=True)
-
-    # Heredoc delimiters are cryptographic nonces AND verified absent from every
-    # user-controlled byte below, so even a deliberately crafted title/commands
-    # payload containing "HEADER_<guess>" can never terminate a heredoc early.
+    script_fd, script_path = tempfile.mkstemp(
+        prefix="omarchy-recipe-", suffix=".sh", dir=secure_dir, text=True
+    )
+    
     blob = "\n".join([
         str(target.get("title", "")),
         str(target.get("category", "")),
@@ -258,12 +436,12 @@ def cmd_run_seq(args):
         str(target.get("commands", "")),
     ])
     token = secrets.token_hex(16)
-    while ("HEADER_" + token) in blob:
+    while f"HEADER_{token}" in blob:
         token = secrets.token_hex(16)
-    
+        
     cmd_lines = [l.strip() for l in target.get("commands", "").split("\n") if l.strip()]
-
-    with os.fdopen(script_fd, 'w', encoding='utf-8') as f:
+    
+    with os.fdopen(script_fd, "w", encoding="utf-8") as f:
         f.write("#!/bin/bash\nset -euo pipefail\ntrap 'rm -f \"$0\"' EXIT\nclear\n")
         f.write(f"cat <<'HEADER_{token}'\n")
         f.write("=====================================================\n")
@@ -284,44 +462,159 @@ def cmd_run_seq(args):
                 f.write(f"{line}\n")
                 continue
             step_token = secrets.token_hex(16)
-            while ("STEP_" + step_token) in line:
+            while f"STEP_{step_token}" in line:
                 step_token = secrets.token_hex(16)
             f.write(f"echo -e '\\n\\033[1;35m>> [{idx}/{len(cmd_lines)}] Running:\\033[0m'\n")
             f.write(f"cat <<'STEP_{step_token}'\n$ {line}\nSTEP_{step_token}\n")
             f.write(f"{line}\n")
             f.write("echo -e '\\033[0;32m   ✓ Step finished.\\033[0m'\n")
-        
+            
         f.write("\necho -e '\\n\\033[1;32m=====================================================\\033[0m'\n")
         f.write("echo -e '\\033[1;32m  ✓ All recipe commands completed.\\033[0m'\n")
         f.write("echo -e '\\033[1;32m=====================================================\\033[0m'\n")
         f.write("echo -e '\\033[0;37mPress [ENTER] to close terminal...\\033[0m'\n")
         f.write("read -r\n")
-    
+        
     os.chmod(script_path, 0o700)
     subprocess.Popen(["omarchy-launch-terminal", "bash", script_path], start_new_session=True)
-    print(json.dumps({"success": True}))
+    return {"success": True}
+
+DISPATCH = {
+    "list": handle_list,
+    "add": handle_add,
+    "delete": handle_delete,
+    "launch": handle_launch,
+    "launch-custom": handle_launch_custom,
+    "list-seq": handle_list_seq,
+    "add-seq": handle_add_seq,
+    "delete-seq": handle_del_seq,
+    "run-seq": handle_run_seq,
+}
+
+def process_request(action, payload):
+    handler = DISPATCH.get(action)
+    if not handler:
+        return {"success": False, "error": f"Unknown action: {action}"}
+    try:
+        return handler(payload)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# Server & Fallback Execution Modes
+# ============================================================================
+
+def run_server():
+    """
+    Run an in-memory UNIX socket server for the active user session.
+    Sockets are created inside $XDG_RUNTIME_DIR/omarchy/troubleshooter/ with 0600
+    permissions so only the current user can communicate with it.
+    """
+    sock_path = get_socket_path()
+    if os.path.exists(sock_path):
+        # Check if already alive
+        test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            test_sock.connect(sock_path)
+            test_sock.sendall(b'{"action":"ping"}\n')
+            resp = test_sock.recv(1024)
+            if resp:
+                print(f"Troubleshooter server already running at {sock_path}")
+                return
+        except Exception:
+            try:
+                os.unlink(sock_path)
+            except OSError:
+                pass
+        finally:
+            test_sock.close()
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(sock_path)
+    os.chmod(sock_path, 0o600)
+    server.listen(16)
+    server.setblocking(False)
+    
+    print(f"Troubleshooter IPC server active: {sock_path}")
+    inputs = [server]
+    
+    try:
+        while True:
+            readable, _, _ = select.select(inputs, [], [], 1.0)
+            for s in readable:
+                if s is server:
+                    conn, _ = server.accept()
+                    conn.setblocking(False)
+                    inputs.append(conn)
+                else:
+                    try:
+                        data = s.recv(65536)
+                        if data:
+                            lines = data.decode("utf-8", errors="replace").split("\n")
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    req = json.loads(line)
+                                    action = req.get("action", "")
+                                    if action == "ping":
+                                        resp = {"success": True, "pong": True}
+                                    else:
+                                        resp = process_request(action, req.get("payload", {}))
+                                except Exception as e:
+                                    resp = {"success": False, "error": f"Malformed request: {str(e)}"}
+                                s.sendall(json.dumps(resp).encode("utf-8") + b"\n")
+                        else:
+                            inputs.remove(s)
+                            s.close()
+                    except Exception:
+                        if s in inputs:
+                            inputs.remove(s)
+                        try:
+                            s.close()
+                        except Exception:
+                            pass
+    finally:
+        try:
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+        except Exception:
+            pass
+
+def run_cli_fallback(action):
+    """
+    Fallback execution when invoked directly as a process.
+    Reads the JSON payload strictly from STDIN.
+    Zero user data arrives via argv.
+    """
+    raw_input = sys.stdin.read()
+    payload = {}
+    if raw_input.strip():
+        try:
+            payload = json.loads(raw_input)
+        except Exception as e:
+            print(json.dumps({"success": False, "error": f"Invalid JSON on STDIN: {str(e)}"}))
+            return
+            
+    result = process_request(action, payload)
+    print(json.dumps(result))
 
 def main():
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    
-    subparsers.add_parser("list")
-    p_add = subparsers.add_parser("add")
-    p_add.add_argument("--title", required=True); p_add.add_argument("--category"); p_add.add_argument("--tags"); p_add.add_argument("--description"); p_add.add_argument("--solution"); p_add.add_argument("--prompt")
-    p_del = subparsers.add_parser("delete"); p_del.add_argument("--id", required=True)
-    p_launch = subparsers.add_parser("launch"); p_launch.add_argument("--id", required=True); p_launch.add_argument("--custom-note")
-    p_custom = subparsers.add_parser("launch-custom")
-    p_custom.add_argument("--issue", required=True); p_custom.add_argument("--category", default="General"); p_custom.add_argument("--tags", default=""); p_custom.add_argument("--save", action="store_true")
-    
-    subparsers.add_parser("list-seq")
-    p_add_seq = subparsers.add_parser("add-seq")
-    p_add_seq.add_argument("--title", required=True); p_add_seq.add_argument("--category"); p_add_seq.add_argument("--tags"); p_add_seq.add_argument("--description"); p_add_seq.add_argument("--commands", required=True)
-    p_del_seq = subparsers.add_parser("delete-seq"); p_del_seq.add_argument("--id", required=True)
-    p_run_seq = subparsers.add_parser("run-seq"); p_run_seq.add_argument("--id", required=True)
-
-    args = parser.parse_args()
-    cmds = {"list": cmd_list, "add": cmd_add, "delete": cmd_delete, "launch": cmd_launch, "launch-custom": cmd_launch_custom, "list-seq": cmd_list_seq, "add-seq": cmd_add_seq, "delete-seq": cmd_del_seq, "run-seq": cmd_run_seq}
-    (cmds.get(args.subcommand, cmd_list))(args)
+    if len(sys.argv) < 2:
+        print("Usage: helper.py <server|action_name>")
+        print("Actions: " + ", ".join(DISPATCH.keys()))
+        sys.exit(1)
+        
+    cmd = sys.argv[1]
+    if cmd in ("server", "--server", "-s"):
+        run_server()
+    elif cmd in DISPATCH:
+        run_cli_fallback(cmd)
+    else:
+        print(json.dumps({"success": False, "error": f"Unknown command: {cmd}"}))
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

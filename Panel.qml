@@ -225,80 +225,142 @@ Panel {
     if (!agentProc.running) agentProc.running = true
   }
 
-  // ---------- Detached Action Handlers ----------
+  // ---------- Zero-Argv Stdin Backend Dispatcher ----------
+  // Process command-line argument contains ONLY the fixed subcommand name.
+  // All user-entered data (notes, prompts, titles, descriptions, commands)
+  // travels strictly via process standard input (STDIN), completely preventing
+  // exposure in ps/top/procfs command-line metadata.
+
+  property var _pendingBackendCalls: []
+  property bool _backendBusy: false
+
+  Process {
+    id: backendRunner
+    stdinEnabled: true
+    property string _payloadJson: ""
+    property var _onFinishCallback: null
+
+    onStarted: {
+      write(_payloadJson + "\n")
+    }
+
+    onExited: function(exitCode) {
+      var cb = backendRunner._onFinishCallback
+      backendRunner._onFinishCallback = null
+      backendRunner._payloadJson = ""
+      root._backendBusy = false
+      if (cb && typeof cb === "function") {
+        try { cb(exitCode === 0) } catch(e) {}
+      }
+      root._drainBackendQueue()
+    }
+  }
+
+  function callBackend(subcommand, payloadObj, onDone) {
+    _pendingBackendCalls.push({
+      subcommand: subcommand,
+      payload: payloadObj || {},
+      callback: onDone
+    })
+    if (!_backendBusy) {
+      _drainBackendQueue()
+    }
+  }
+
+  function _drainBackendQueue() {
+    if (_pendingBackendCalls.length === 0 || _backendBusy) return
+    _backendBusy = true
+    var req = _pendingBackendCalls.shift()
+    backendRunner.command = [root.helperCmd, req.subcommand]
+    backendRunner._payloadJson = JSON.stringify(req.payload)
+    backendRunner._onFinishCallback = req.callback
+    backendRunner.running = true
+  }
+
+  // ---------- Action Handlers ----------
 
   function launchIssue(issueId, customNote) {
-    var cmd = [root.helperCmd, "launch", "--id", issueId]
-    if (customNote && customNote.trim() !== "") {
-      cmd.push("--custom-note")
-      cmd.push(customNote.trim())
-    }
-    Quickshell.execDetached(cmd)
+    callBackend("launch", {
+      "id": issueId,
+      "custom_note": customNote ? customNote.trim() : ""
+    }, function() {
+      refreshTimer.restart()
+    })
     root.close()
   }
 
   function deleteIssue(issueId) {
-    Quickshell.execDetached([root.helperCmd, "delete", "--id", issueId])
-    refreshTimer.restart()
+    callBackend("delete", {
+      "id": issueId
+    }, function() {
+      refreshTimer.restart()
+    })
   }
 
   function launchQuickIssue() {
     if (!quickIssueText.trim()) return
-    var cmd = [root.helperCmd, "launch-custom", "--issue", quickIssueText.trim(), "--category", quickCategory]
-    if (quickSave) cmd.push("--save")
-    Quickshell.execDetached(cmd)
+    callBackend("launch-custom", {
+      "issue": quickIssueText.trim(),
+      "category": quickCategory,
+      "save": quickSave
+    }, function() {
+      refreshTimer.restart()
+    })
     quickIssueText = ""
     root.close()
   }
 
   function runSequence(seqId) {
-    Quickshell.execDetached([root.helperCmd, "run-seq", "--id", seqId])
+    callBackend("run-seq", {
+      "id": seqId
+    }, null)
     root.close()
   }
 
   function deleteSequence(seqId) {
-    Quickshell.execDetached([root.helperCmd, "delete-seq", "--id", seqId])
-    refreshTimer.restart()
+    callBackend("delete-seq", {
+      "id": seqId
+    }, function() {
+      refreshTimer.restart()
+    })
   }
 
   function saveNewIssue() {
     if (!formTitle.trim()) return
-    var cmd = [
-      root.helperCmd, "add",
-      "--title", formTitle.trim(),
-      "--category", formCategory.trim() || "General",
-      "--tags", formTags.trim(),
-      "--description", formDescription.trim(),
-      "--solution", formSolution.trim(),
-      "--prompt", formPrompt.trim()
-    ]
-    Quickshell.execDetached(cmd)
+    callBackend("add", {
+      "title": formTitle.trim(),
+      "category": formCategory.trim() || "General",
+      "tags": formTags.trim(),
+      "description": formDescription.trim(),
+      "solution": formSolution.trim(),
+      "prompt": formPrompt.trim()
+    }, function() {
+      refreshTimer.restart()
+    })
     formTitle = ""
     formTags = ""
     formDescription = ""
     formSolution = ""
     formPrompt = ""
     showAddForm = false
-    refreshTimer.restart()
   }
 
   function saveNewSequence() {
     if (!formTitle.trim()) return
-    var cmd = [
-      root.helperCmd, "add-seq",
-      "--title", formTitle.trim(),
-      "--category", formCategory.trim() || "General",
-      "--tags", formTags.trim(),
-      "--description", formDescription.trim(),
-      "--commands", formCommands.trim()
-    ]
-    Quickshell.execDetached(cmd)
+    callBackend("add-seq", {
+      "title": formTitle.trim(),
+      "category": formCategory.trim() || "General",
+      "tags": formTags.trim(),
+      "description": formDescription.trim(),
+      "commands": formCommands.trim()
+    }, function() {
+      refreshTimer.restart()
+    })
     formTitle = ""
     formTags = ""
     formDescription = ""
     formCommands = ""
     showAddForm = false
-    refreshTimer.restart()
   }
 
   Timer {
